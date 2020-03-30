@@ -78,10 +78,9 @@ class BLTouchEndstopWrapper:
                 self.add_stepper(stepper)
     def handle_connect(self):
         self.set_output_mode(self.output_mode)
-        try:
-            self.raise_probe()
-        except homing.CommandError as e:
-            logging.warning("BLTouch raise probe error: %s", str(e))
+        success = self.raise_probe()
+        if not success:
+            logging.warning("BLTouch failed to raise probe")
     def sync_mcu_print_time(self):
         curtime = self.printer.get_reactor().monotonic()
         est_time = self.mcu_pwm.get_mcu().estimated_print_time(curtime)
@@ -124,9 +123,9 @@ class BLTouchEndstopWrapper:
             success = self.verify_state(check_start_time, check_end_time, False)
             if success:
                 # The "probe raised" test completed successfully
-                break
+                return True
             if retry >= 2:
-                raise homing.EndstopError("BLTouch failed to raise probe")
+                return False
             msg = "Failed to verify BLTouch probe is raised; retrying."
             self.gcode.respond_info(msg)
             self.sync_mcu_print_time()
@@ -171,7 +170,9 @@ class BLTouchEndstopWrapper:
     def multi_probe_end(self):
         if self.stow_on_each_sample:
             return
-        self.raise_probe()
+        success = self.raise_probe()
+        if not success:
+            raise homing.EndstopError("BLTouch failed to raise probe")
         self.sync_print_time()
         self.multi = 'OFF'
     def probe_prepare(self):
@@ -186,7 +187,9 @@ class BLTouchEndstopWrapper:
                               for s in self.mcu_endstop.get_steppers()]
     def probe_finalize(self):
         if self.multi == 'OFF':
-            self.raise_probe()
+            success = self.raise_probe()
+            if not success:
+                raise homing.EndstopError("BLTouch failed to raise probe")
         self.sync_print_time()
         # Verify the probe actually deployed during the attempt
         for s, mcu_pos in self.start_mcu_pos:
