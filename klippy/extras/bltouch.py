@@ -36,7 +36,9 @@ class BLTouchEndstopWrapper:
         self.mcu_pwm = ppins.setup_pin('pwm', config.get('control_pin'))
         self.mcu_pwm.setup_max_duration(0.)
         self.mcu_pwm.setup_cycle_time(SIGNAL_PERIOD)
+        # Command timing
         self.next_cmd_time = self.action_end_time = 0.
+        self.home_complete = self.raise_complete = None
         # Create an "endstop" object to handle the sensor pin
         pin = config.get('sensor_pin')
         pin_params = ppins.lookup_pin(pin, can_invert=True, can_pullup=True)
@@ -187,7 +189,7 @@ class BLTouchEndstopWrapper:
                               for s in self.mcu_endstop.get_steppers()]
     def probe_finalize(self):
         if self.multi == 'OFF':
-            success = self.raise_probe()
+            success = self.raise_complete.wait()
             if not success:
                 raise homing.EndstopError("BLTouch failed to raise probe")
         self.sync_print_time()
@@ -195,10 +197,20 @@ class BLTouchEndstopWrapper:
         for s, mcu_pos in self.start_mcu_pos:
             if s.get_mcu_position() == mcu_pos:
                 raise homing.EndstopError("BLTouch failed to deploy")
+    def raise_probe_on_trigger(self, eventtime):
+        self.home_complete.wait()
+        return self.raise_probe()
     def home_start(self, print_time, sample_time, sample_count, rest_time):
         rest_time = min(rest_time, ENDSTOP_REST_TIME)
-        return self.mcu_endstop.home_start(print_time, sample_time,
-                                           sample_count, rest_time)
+        complete = self.mcu_endstop.home_start(print_time, sample_time,
+                                               sample_count, rest_time)
+        if self.multi == 'OFF':
+            # Schedule a task to raise the probe on a trigger
+            reactor = self.printer.get_reactor()
+            rc = reactor.register_callback(self.raise_probe_on_trigger)
+            self.home_complete = complete
+            self.raise_complete = rc
+        return complete
     def get_position_endstop(self):
         return self.position_endstop
     def set_output_mode(self, mode):
